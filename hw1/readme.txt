@@ -2,17 +2,19 @@ Music 220b - HW1 README
 Akash Shah
 
 ================================================================================
-SOUND LOGO
+SOUND LOGO - Stanford Mendicants
 ================================================================================
 
 Ideas/Comments:
-- Built using 4 sawtooth oscillators routed through JCRev reverb
-- 9-chord progression with varying durations (2s, 3s, 1s, 2s, 1s, 1s, 1.5s, 1.5s, 5s)
-- Smooth frequency slides (portamento) between chords using sporked slide functions
-- Each voice glides independently over 0.5 seconds to create evolving harmonies
-- Low reverb mix (0.1) for subtle spatial depth without washing out the sound
-
-[TODO: Add your personal artistic intent and any additional comments]
+- Sound logo for the Stanford Mendicants, Stanford's oldest all-male a cappella group
+- I am the Music Director of the group
+- Based on a barbershop tag I arranged, modeled after "All The Things You Are" chord progression
+- Transcribed my 4-part vocal arrangement into ChucK:
+  - 4 sawtooth oscillators represent the 4 voice parts (tenor, lead, bari, bass)
+  - Smooth frequency slides (portamento) mimic how voices glide between notes
+  - JCRev reverb evokes the warmth of singing in a resonant space (stairwell vibes)
+- 9-chord progression with varying durations to match the phrasing of the original tag
+- Low reverb mix (0.1) keeps the harmonies clear while adding blend
 
 ================================================================================
 CHUCKU 1: MAJOR 7TH (chucku1_major7.ck)
