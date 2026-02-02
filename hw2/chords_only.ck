@@ -1,19 +1,13 @@
-"pitch pipe c.wav" => string PITCH_PIPE_FILE;
 "pitch pipe static.wav" => string CHORD_FILE;
 
-45 => float INTRO_BPM;  
-90 => float MAIN_BPM;   
-
+90 => float INTRO_BPM;
 (60.0 / INTRO_BPM)::second => dur INTRO_BEAT;
-(60.0 / MAIN_BPM)::second => dur BEAT;
-BEAT / 2 => dur EIGHTH;
-BEAT / 4 => dur SIXTEENTH;
-BEAT / 8 => dur THIRTYSECOND;
-
 
 3 => int NUM_VOICES;
-
 500::ms => dur GLIDE_TIME;
+
+dac => WvOut wv => blackhole;
+"chords.wav" => wv.wavFilename;
 
 SndBuf chordVoices[NUM_VOICES];
 NRev chordRev => dac;
@@ -86,20 +80,11 @@ fun void fadeOutChords() {
         }
         fadeStep => now;
     }
-    
+
     for (0 => int i; i < NUM_VOICES; i++) {
         0 => chordVoices[i].gain;
     }
 }
-
-
-[
-    [0, 4, 7, 11, 14, 19],
-    [4, 7, 10, 14, 16, 19],
-    [2, 5, 9, 12, 16, 19],
-    [2, 5, 8, 11, 14, 16]
-] @=> int chords[][];
-
 
 [
     [0, 4, 7],
@@ -108,14 +93,6 @@ fun void fadeOutChords() {
     [2, 5, 8]
 ] @=> int padChordsBase[][];
 
-
-fun void shiftChordDown(int chord[], int octaves) {
-    for (0 => int i; i < chord.size(); i++) {
-        chord[i] - (12 * octaves) => chord[i];
-    }
-}
-
-
 int padChords[4][3];
 for (0 => int c; c < padChordsBase.size(); c++) {
     for (0 => int n; n < padChordsBase[c].size(); n++) {
@@ -123,82 +100,9 @@ for (0 => int c; c < padChordsBase.size(); c++) {
     }
 }
 
-SndBuf pitchBuf => NRev arpRev => dac;
-0.3 => arpRev.mix;
-0.5 => pitchBuf.gain;
-
-SndBuf kick => dac;
-SndBuf snare => dac;
-SndBuf hihat => dac;
-
-"pitch pipe drop.wav" => kick.read;
-"pitch pipe flick.wav" => snare.read;
-"pitch pipe tap.wav" => hihat.read;
-
-0.4 => kick.gain;
-0.3 => snare.gain;
-0.15 => hihat.gain;
-
-PITCH_PIPE_FILE => pitchBuf.read;
-
-[0, 2, 4, 1, 3, 5, 0, 2, 4, 1, 3, 5, 0, 3, 5, 4] @=> int arpPattern[];
-
-[1, 0, 0, 0, 0, 0, 0, 0] @=> int kickPattern[];
-[0, 0, 0, 0, 1, 0, 0, 0] @=> int snarePattern[];
-[0, 0, 1, 1, 0, 0, 1, 1] @=> int hihatPattern[];
-
-fun void playArpNote(int semitones) {
-    0 => pitchBuf.pos;
-    semitoneToRatio(semitones) => pitchBuf.rate;
-}
-
-fun void triggerDrum(SndBuf @ buf) {
-    0 => buf.pos;
-    1 => buf.rate;
-}
-
-4 => int NUM_REPEATS;
-
-fun void drumLoop() {
-    while (true) {
-        for (0 => int i; i < kickPattern.size(); i++) {
-            if (kickPattern[i]) triggerDrum(kick);
-            if (snarePattern[i]) triggerDrum(snare);
-            if (hihatPattern[i]) triggerDrum(hihat);
-            SIXTEENTH => now;
-        }
-    }
-}
-
-fun void arpLoop() {
-    for (0 => int r; r < NUM_REPEATS; r++) {
-        <<< "--- Arp Pass", r + 1, "of", NUM_REPEATS, "---" >>>;
-        for (0 => int c; c < chords.size(); c++) {
-            chords[c] @=> int currentChord[];
-
-            for (0 => int i; i < arpPattern.size(); i++) {
-                arpPattern[i] => int toneIndex;
-                currentChord[toneIndex] => int semitones;
-
-                playArpNote(semitones);
-                THIRTYSECOND => now;
-            }
-        }
-    }
-    <<< "Done!" >>>;
-}
-
-
-
-<<< "=== MILESTONE 1 ===" >>>;
-<<< "Chord Intro at", INTRO_BPM, "BPM" >>>;
-<<< "Arp Section at", MAIN_BPM, "BPM" >>>;
-
-
-<<< "--- Starting Chord Section ---" >>>;
+<<< "=== CHORDS ONLY ===" >>>;
 
 startChordVoices();
-
 
 for (0 => int i; i < NUM_VOICES && i < padChords[0].size(); i++) {
     semitoneToRatio(padChords[0][i]) => currentRates[i];
@@ -206,10 +110,7 @@ for (0 => int i; i < NUM_VOICES && i < padChords[0].size(); i++) {
     currentRates[i] => chordVoices[i].rate;
 }
 
-
 for (0 => int c; c < 4; c++) {
-    <<< "Chord", c + 1 >>>;
-
     setTargetChord(padChords[c]);
     glideChordVoices();
 
@@ -219,11 +120,7 @@ for (0 => int c; c < 4; c++) {
     }
 }
 
-
-<<< "--- Transitioning to Arp ---" >>>;
 fadeOutChords();
 
-<<< "--- Starting Arp Section ---" >>>;
-
-spork ~ drumLoop();
-arpLoop();
+wv.closeFile();
+<<< "Saved chords.wav" >>>;
