@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music 220b - HW3: Breakcore Drum Machine</title>
+    <style>
+        body { font-family: Georgia, serif; max-width: 700px; margin: 40px auto; padding: 0 20px; line-height: 1.6; }
+        h1 { border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        h2 { margin-top: 30px; }
+        audio { display: block; margin: 15px 0; width: 100%; }
+        ul { list-style: none; padding: 0; }
+        li { margin: 8px 0; }
+        a { color: #0066cc; }
+        kbd { background: #eee; border: 1px solid #ccc; border-radius: 3px; padding: 1px 5px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>Music 220b - HW3: Breakcore Drum Machine</h1>
+    <p><strong>Akash Shah</strong></p>
+
+    <h2>Milestone</h2>
+    <p>
+        An interactive breakcore drum machine built in ChucK with a 16-step sequencer and a breathy pad synth layered underneath.
+    </p>
+    <p>
+        The sequencer works by looping through 16 steps at sixteenth-note intervals (~170 BPM). Each drum instrument
+        has its own pattern which is an array of 16 probability/velocity values. On each step,
+        if the value is greater than zero, the corresponding sample fires at that velocity. This means patterns
+        aren't just on/off but they have dynamics with ghost notes at lower velocities and accents at higher ones.
+        Each instrument has 4 preset patterns that can be swapped in live, and samples get slight random
+        pitch/velocity variation on each hit to keep things from sounding too mechanical.
+    </p>
+    <p>
+        The mutation system picks 2&ndash;4 random steps in a pattern and flips them. If a step has a hit, it removes it;
+        if it's empty, it adds one at a random velocity. This produces subtle variations on the current pattern instead of generating
+        a completely new pattern, so you can evolve the groove without it being jarring. Full randomize, by contrast, regenerates
+        every pattern from scratch with different density targets (kicks sparse, hats dense, etc.). Didn't rly do this in the recording cause it 
+        doesn't sound good every time I've tried it.
+    </p>
+    <p>
+        The pad synth is 7 voices of detuned saw oscillators mixed with noise
+        through a low-pass filter with a slow LFO sweep, producing big 13th chords
+        that cycle through a shuffleable progression.
+    </p>
+    <p>
+        Everything is controlled live via keyboard: number keys and letter keys switch between drum pattern presets,
+        <kbd>z</kbd> fully randomizes all patterns, <kbd>x</kbd> subtly mutates them, <kbd>c</kbd> resets to defaults,
+        <kbd>g</kbd> toggles the pad on/off, <kbd>t</kbd> shuffles the chord progression order,
+        and <kbd>space</kbd> triggers a manual crash hit.
+    </p>
+    <p>
+        In this recording I'm just running the program and messing around with it live, mutating the drum patterns
+        several times, switching between different kick/snare/hat presets, toggling the pad chords on and off,
+        and shuffling the chord progression. You can also hear me hitting the crash on the spacebar at various points;
+        it's pretty hard to land that exactly on beat with a keyboard, which you can hear in a few spots where it's slightly off.
+    </p>
+    <audio controls>
+        <source src="recording.wav" type="audio/wav">
+    </audio>
+
+    <p>
+        For the final project, I want to explore having the patterns algorithmically mutate at a constant rate on their own,
+        so the beat is always evolving without any input. The keyboard controls would then just be for switching between
+        different patterns that are actively being generated, rather than triggering changes manually.
+    </p>
+
+    <h2>Files</h2>
+    <ul>
+        <li><a href="breakmachine.ck">breakmachine.ck</a> - Breakcore drum machine + pad synth</li>
+    </ul>
+</body>
+</html>
