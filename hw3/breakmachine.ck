@@ -3,6 +3,8 @@
 // Music 220b HW3 - Milestone 1
 // ==========================================
 
+//things to add: sidechain, mutation knob/touchpad listener,
+//drop function, more toggles to add/remove stuff
 
 350::ms => dur Q; // ~170 BPM quarter note
 Q/4 => dur S;     // sixteenth note
@@ -88,6 +90,7 @@ class Pattern
 class DrumPattern extends Pattern
 {
     int sound;
+    1 => int active;
 
     fun void run( int N )
     {
@@ -97,7 +100,7 @@ class DrumPattern extends Pattern
             if( N > 0 ) N--;
             boom => now;
             boom.n => n;
-            if( probs[n] > 0 )
+            if( probs[n] > 0 && active )
             { play( sound, probs[n] * volume ); }
         }
     }
@@ -252,6 +255,19 @@ copyPat( percP0, perc.probs );
 0 => int curSnare;
 0 => int curHat;
 
+// sidechain state
+0 => int sidechainOn;
+0 => int sidechainSource;  // 0=kick, 1=snare, 2=hat, 3=perc
+
+// riser UGen chain
+Noise riserNz => BPF riserBpf => Gain riserGain;
+riserGain => rL;
+riserGain => rR;
+0.0 => riserGain.gain;
+500.0 => riserBpf.freq;
+4.0 => riserBpf.Q;
+0 => int dropping;
+
 
 fun void setKickPreset( int idx )
 {
@@ -350,6 +366,7 @@ fun void resetAll()
     setSnarePreset( 0 );
     setHatPreset( 0 );
     copyPat( percP0, perc.probs );
+    1 => kick.active => snare.active => hat.active => perc.active;
     // reset pad progression
     0 => progression[0]; 1 => progression[1]; 2 => progression[2];
     3 => progression[3]; 4 => progression[4];
@@ -433,6 +450,145 @@ fun void padSweep()
 }
 
 
+fun string sidechainSourceName()
+{
+    if( sidechainSource == 0 ) return "KICK";
+    if( sidechainSource == 1 ) return "SNARE";
+    if( sidechainSource == 2 ) return "HAT";
+    return "PERC";
+}
+
+fun void toggleSidechain()
+{
+    if( sidechainOn )
+    {
+        0 => sidechainOn;
+        <<< "SIDECHAIN: OFF" >>>;
+    }
+    else
+    {
+        1 => sidechainOn;
+        <<< "SIDECHAIN: ON ->", sidechainSourceName() >>>;
+    }
+}
+
+fun void cycleSidechainSource()
+{
+    (sidechainSource + 1) % 4 => sidechainSource;
+    <<< "SIDECHAIN source:", sidechainSourceName() >>>;
+}
+
+fun void duckPad( float intensity )
+{
+    0.25 => float baseGain;
+    // duck depth proportional to hit intensity (nearly silent on hard hits)
+    baseGain * (1.0 - 0.95 * intensity) => float duckGain;
+    // fast attack
+    duckGain => padOut.gain;
+    // smooth release over ~4 sixteenth notes for big pump
+    S * 4 => dur relTime;
+    20 => int steps;
+    relTime / steps => dur stepDur;
+    for( 0 => int i; i < steps; i++ )
+    {
+        duckGain + (baseGain - duckGain) * ((i + 1) $ float / steps) => padOut.gain;
+        stepDur => now;
+    }
+    baseGain => padOut.gain;
+}
+
+fun void toggleDrum( DrumPattern p, string name )
+{
+    if( p.active )
+    {
+        0 => p.active;
+        <<< name, ": MUTED" >>>;
+    }
+    else
+    {
+        1 => p.active;
+        <<< name, ": ON" >>>;
+    }
+}
+
+fun void doDrop()
+{
+    if( dropping ) return;
+    1 => dropping;
+    <<< ">>> RISER (waiting for downbeat) <<<" >>>;
+
+    // sync to top of next measure
+    while( boom.n != 0 )
+    { boom => now; }
+    <<< ">>> RISER GO <<<" >>>;
+
+    // riser: 4 bars (64 sixteenth notes)
+    64 => int riserSteps;
+    200.0 => float startFreq;
+    10000.0 => float endFreq;
+
+    for( 0 => int i; i < riserSteps; i++ )
+    {
+        i $ float / riserSteps => float t;
+        // exponential frequency sweep
+        startFreq * Math.pow( endFreq / startFreq, t ) => riserBpf.freq;
+        // ramp gain up
+        t * t * 0.8 => riserGain.gain;
+        // tighten Q as it rises
+        4.0 + t * 14.0 => riserBpf.Q;
+
+        // gradually strip out drums
+        if( i == riserSteps / 2 )     { 0 => hat.active; 0 => perc.active; }
+        if( i == riserSteps * 3 / 4 ) { 0 => snare.active; }
+        if( i == riserSteps * 7 / 8 ) { 0 => kick.active; }
+
+        S => now;
+    }
+
+    // kill riser, mute everything for last bar of silence
+    0.0 => riserGain.gain;
+    0 => kick.active;
+    0 => snare.active;
+    0 => hat.active;
+    0 => perc.active;
+    0 => padActive;
+    0.0 => padOut.gain;
+    for( 0 => int i; i < 7; i++ )
+    { padEnv[i].keyOff(); }
+    // wait one full bar of silence (16 steps) so drop lands on downbeat
+    S * 16 => now;
+
+    // THE DROP - crash + hard reset on the 1
+    play( 7, 1.0 );
+    resetAll();
+    1 => padActive;
+    0.25 => padOut.gain;
+
+    0 => dropping;
+    <<< ">>> DROP <<<" >>>;
+}
+
+
+fun void sidechainPump()
+{
+    while( true )
+    {
+        boom => now;
+        if( !sidechainOn || !padActive ) continue;
+
+        // check if selected pattern has a hit this step
+        0.0 => float hitVol;
+        if( sidechainSource == 0 )      kick.probs[boom.n] => hitVol;
+        else if( sidechainSource == 1 ) snare.probs[boom.n] => hitVol;
+        else if( sidechainSource == 2 ) hat.probs[boom.n] => hitVol;
+        else                            perc.probs[boom.n] => hitVol;
+
+        if( hitVol > 0 )
+        { spork ~ duckPad( hitVol ); }
+    }
+}
+
+
 fun void keyboardListener()
 {
     HidIn hi;
@@ -483,6 +639,19 @@ fun void keyboardListener()
                 else if( key == 116 ) shuffleProgression(); // t
                 else if( key == 103 ) togglePad();          // g
 
+                // mute toggles: 5-8
+                else if( key == 53 ) toggleDrum( kick,  "KICK" );   // 5
+                else if( key == 54 ) toggleDrum( snare, "SNARE" );  // 6
+                else if( key == 55 ) toggleDrum( hat,   "HAT" );    // 7
+                else if( key == 56 ) toggleDrum( perc,  "PERC" );   // 8
+
+                // sidechain controls
+                else if( key == 118 ) toggleSidechain();       // v
+                else if( key == 98 )  cycleSidechainSource();  // b
+
+                // drop
+                else if( key == 110 ) spork ~ doDrop();        // n
+
                 // crash: space
                 else if( key == 32 )  play( 7, 1.0 );     // space
             }
@@ -498,6 +667,7 @@ spork ~ perc.run( -1 );
 spork ~ keyboardListener();
 spork ~ padRunner();
 spork ~ padSweep();
+spork ~ sidechainPump();
 
 me.yield();
 
@@ -506,10 +676,14 @@ me.yield();
 <<< "170 BPM | 16-step sequencer" >>>;
 <<< "---" >>>;
 <<< "1-4 : kick presets" >>>;
+<<< "5-8 : mute kick/snare/hat/perc" >>>;
 <<< "q w e r : snare presets" >>>;
 <<< "a s d f : hat presets" >>>;
 <<< "t : shuffle pad chords" >>>;
 <<< "g : toggle pad on/off" >>>;
+<<< "v : toggle sidechain on/off" >>>;
+<<< "b : cycle sidechain source (kick>snare>hat>perc)" >>>;
+<<< "n : drop (riser + crash)" >>>;
 <<< "z : full randomize" >>>;
 <<< "x : mutate (subtle)" >>>;
 <<< "c : reset to defaults" >>>;
