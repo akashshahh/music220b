@@ -44,6 +44,45 @@
         <source src="recording.wav" type="audio/wav">
     </audio>
 
+    <h2>Controls</h2>
+    <table style="border-collapse: collapse; width: 100%; font-size: 0.95em;">
+        <thead>
+            <tr style="border-bottom: 2px solid #ccc; text-align: left;">
+                <th style="padding: 6px 12px;">Key</th>
+                <th style="padding: 6px 12px;">Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td colspan="2" style="padding: 10px 12px 4px; font-weight: bold; color: #555;">Drum Presets</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td style="padding: 4px 12px;">Kick presets (cycles samples + patterns)</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>Q</kbd> <kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd></td><td style="padding: 4px 12px;">Snare presets</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>F</kbd></td><td style="padding: 4px 12px;">Hat presets (D uses open hat)</td></tr>
+
+            <tr><td colspan="2" style="padding: 10px 12px 4px; font-weight: bold; color: #555;">Mute Toggles</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>5</kbd></td><td style="padding: 4px 12px;">Mute/unmute kick</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>6</kbd></td><td style="padding: 4px 12px;">Mute/unmute snare</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>7</kbd></td><td style="padding: 4px 12px;">Mute/unmute hat</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>8</kbd></td><td style="padding: 4px 12px;">Mute/unmute perc</td></tr>
+
+            <tr><td colspan="2" style="padding: 10px 12px 4px; font-weight: bold; color: #555;">Pattern Control</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>Z</kbd></td><td style="padding: 4px 12px;">Full randomize (all patterns + chord order)</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>X</kbd></td><td style="padding: 4px 12px;">Mutate (flips 2-4 random steps per instrument)</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>C</kbd></td><td style="padding: 4px 12px;">Reset everything to defaults</td></tr>
+
+            <tr><td colspan="2" style="padding: 10px 12px 4px; font-weight: bold; color: #555;">Pad Synth</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>G</kbd></td><td style="padding: 4px 12px;">Toggle pad on/off</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>T</kbd></td><td style="padding: 4px 12px;">Shuffle chord progression order</td></tr>
+
+            <tr><td colspan="2" style="padding: 10px 12px 4px; font-weight: bold; color: #555;">Sidechain</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>V</kbd></td><td style="padding: 4px 12px;">Toggle sidechain compression on/off</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>B</kbd></td><td style="padding: 4px 12px;">Cycle sidechain source (kick &rarr; snare &rarr; hat &rarr; perc)</td></tr>
+
+            <tr><td colspan="2" style="padding: 10px 12px 4px; font-weight: bold; color: #555;">Performance</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>N</kbd></td><td style="padding: 4px 12px;">Drop (4-bar noise riser &rarr; silence &rarr; crash + reset)</td></tr>
+            <tr><td style="padding: 4px 12px;"><kbd>Space</kbd></td><td style="padding: 4px 12px;">Manual crash hit</td></tr>
+        </tbody>
+    </table>
+
     <h2>Files</h2>
     <ul>
         <li><a href="breakmachine.ck">breakmachine.ck</a> - Breakcore drum machine + pad synth</li>
