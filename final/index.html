@@ -68,6 +68,1044 @@
             <a href="YOUR_YOUTUBE_LINK_HERE">watch the performance</a>
         </div>
         <div class="author">Akash Shah — Music 220b</div>
+
+        <details style="margin-top: 48px; text-align: left;">
+            <summary style="cursor: pointer; color: #8a9cc5; font-size: 1.05rem; letter-spacing: 0.04em;">view source code</summary>
+            <pre style="margin-top: 16px; padding: 20px; background: #111118; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; color: #b0b8c8; font-family: 'Courier New', monospace; text-align: left;"><code>// ==========================================
+// piano_conversation.ck
+// music 220b final
+// basically u play a note, hit space, and it responds w an ambient thing
+// hit space again to stop it, then play another note, repeat
+//
+// controls:
+//   space    = switch turns (ur turn / system turn)
+//   up/down  = adjust mic sensitivity
+//   m        = mute/unmute mic
+//   r        = reset everything
+// ==========================================
+
+
+
+
+//tracking whose turn it is
+0 =&gt; int LISTENING;
+1 =&gt; int ANALYZING;
+2 =&gt; int RESPONDING;
+3 =&gt; int COOLDOWN;
+
+
+0 =&gt; int convState;
+
+// --- analysis results ---
+// filled in while listening, read when responding
+
+// chroma = how much energy each of the 12 pitch classes has
+// like a histogram
+float chroma[12];
+float chromaAccum[12];
+
+// which note
+0 =&gt; int detectedRoot;
+
+// major or minor, but its random lol
+0 =&gt; int detectedQuality;
+
+// how loud the input is rn (rms = root mean square, standard loudness measure)
+0.0 =&gt; float inputRMS;
+
+// loudest moment during ur whole phrase, used to scale the response volume
+0.0 =&gt; float inputPeakRMS;
+
+// what range of notes played in (midi numbers)
+// 60 = middle C for reference
+0 =&gt; int inputLowNote;
+127 =&gt; int inputHighNote;
+
+
+0.0 =&gt; float inputDensity;
+0.0 =&gt; float inputDuration;
+0 =&gt; int onsetCount;
+0 =&gt; int frameCount;
+
+
+// these get shared between the audio analysis and the visuals
+// so the graphics can react to whats happening in real time
+
+// loudness for the visuals
+0.0 =&gt; float vizRMS;
+
+// chroma for the visuals
+float vizChroma[12];
+
+// which state the visuals think we're in
+0 =&gt; int vizState;
+
+// how far thru the response we are 0-1
+0.0 =&gt; float responseProgress;
+
+//mic tuning
+// too low = picks up noise, too high = doesnt hear soft playing
+// adjust w up/down arrows while running
+0.0001 =&gt; float SILENCE_THRESH;
+
+// mic mute toggle (m)
+0 =&gt; int micMuted;
+
+// --- lookup tables ---
+["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"] @=&gt; string pcNames[];
+["major","minor"] @=&gt; string qualNames[];
+
+// --- pad voicings ---
+// chord shapes for the pad response
+// each one is 4 notes, 3 options per quality
+
+
+//   0: root, 5th, maj7, 9th
+//   1: root, 3rd, 9th up an octave, #11
+//   2: root, maj7, 9th, 13th
+[0, 7, 11, 14,   0, 4, 14, 18,   0, 11, 14, 21] @=&gt; int majVoicings[];
+
+// minor voicings
+//   0: root, 5th, b7, 9th
+//   1: root, b3, 9th up, 11th
+//   2: root, b7, 9th, 13th
+[0, 7, 10, 14,   0, 3, 14, 17,   0, 10, 14, 21] @=&gt; int minVoicings[];
+
+
+// bells and arps use these
+
+
+[0, 2, 4, 6, 7, 9, 11] @=&gt; int scaleLydian[];
+
+
+[0, 2, 3, 5, 7, 9, 10] @=&gt; int scaleDorian[];
+
+
+// =====================================================================
+// audio input + fft setup
+// =====================================================================
+
+adc =&gt; Gain inputGain =&gt; blackhole;
+
+// boosted gain
+5.0 =&gt; inputGain.gain;
+
+// fft = fast fourier transform, turns audio into frequency info
+adc =&gt; FFT fft =&gt; blackhole;
+
+// 8192 samples per fft window
+// at 44100hz sample rate this is ~186ms per window which is good
+8192 =&gt; fft.size;
+
+// hann window smooths the edges of each audio chunk
+// prevents fake frequencies from showing up
+Windowing.hann(fft.size() / 2) =&gt; fft.window;
+
+// number of frequency bins we get (always half fft)
+// each bin covers about 5.4hz
+fft.size() / 2 =&gt; int NUM_BINS;
+
+
+// =====================================================================
+// response audio routing
+// =====================================================================
+
+// mix buses
+Gain padBus =&gt; Gain mixBus;
+Gain bellBus =&gt; mixBus;
+Gain texBus =&gt; mixBus;
+Gain droneBus =&gt; mixBus;
+
+// bus volumes
+0.4 =&gt; padBus.gain;
+0.3 =&gt; bellBus.gain;
+0.2 =&gt; texBus.gain;
+0.1 =&gt; droneBus.gain;
+
+// master volume
+0.6 =&gt; mixBus.gain;
+
+// --- effects chain ---
+mixBus =&gt; NRev masterRev =&gt; LPF masterLPF =&gt; dac;
+
+
+0.15 =&gt; masterRev.mix;
+
+// lpf at 5000hz makes everything warm
+5000.0 =&gt; masterLPF.freq;
+
+// --- delay (echo) ---
+
+// first delay: 400ms echo
+masterRev =&gt; DelayL del1 =&gt; Gain delWet =&gt; masterLPF;
+500::ms =&gt; del1.max;
+400::ms =&gt; del1.delay;
+0.15 =&gt; delWet.gain;
+
+// second delay: 750ms, fed from the first one
+delWet =&gt; DelayL del2 =&gt; Gain delFb2 =&gt; masterLPF;
+750::ms =&gt; del2.max;
+750::ms =&gt; del2.delay;
+0.1 =&gt; delFb2.gain;
+
+// --- pad voices ---
+SawOsc padSawA[4];
+SawOsc padSawB[4];
+LPF padLPF[4];
+ADSR padEnv[4];
+
+for( 0 =&gt; int i; i &lt; 4; i++ )
+{
+    // saws -&gt; filter -&gt; envelope -&gt; bus
+    padSawA[i] =&gt; padLPF[i] =&gt; padEnv[i] =&gt; padBus;
+    padSawB[i] =&gt; padLPF[i];
+
+    // quiet
+    0.15 =&gt; padSawA[i].gain;
+    0.15 =&gt; padSawB[i].gain;
+
+    // warm filter starting point
+    1200.0 =&gt; padLPF[i].freq;
+    1.0 =&gt; padLPF[i].Q;
+
+    // slow attack and release for dreamy fade in/out
+    padEnv[i].set( 800::ms, 400::ms, 0.7, 2500::ms );
+}
+
+// --- bell voice ---
+SinOsc bellOsc =&gt; LPF bellLPF =&gt; ADSR bellEnv =&gt; NRev bellRev =&gt; bellBus;
+
+0.5 =&gt; bellOsc.gain;
+5000.0 =&gt; bellLPF.freq;
+// fast attack
+bellEnv.set( 5::ms, 200::ms, 0.5, 400::ms );
+0.3 =&gt; bellRev.mix;   // extra reverb for shimmer
+
+// --- arp voice ---
+SinOsc arpOsc =&gt; LPF arpLPF =&gt; ADSR arpEnv =&gt; NRev arpRev =&gt; bellBus;
+
+0.5 =&gt; arpOsc.gain;
+5000.0 =&gt; arpLPF.freq;
+// slightly shorter than bells
+arpEnv.set( 5::ms, 150::ms, 0.5, 300::ms );
+0.2 =&gt; arpRev.mix;
+
+// --- texture voice ---
+// white noise thru a bandpass filter
+Noise texNoise =&gt; BPF texBPF =&gt; ADSR texEnv =&gt; texBus;
+
+0.4 =&gt; texNoise.gain;
+400.0 =&gt; texBPF.freq;
+3.0 =&gt; texBPF.Q;
+// slow fades for atmospheric effect
+texEnv.set( 400::ms, 200::ms, 0.6, 600::ms );
+
+// --- drone ---
+
+// root note
+SinOsc droneSin =&gt; droneBus;
+// fifth above root
+TriOsc droneFifth =&gt; droneBus;
+// sub bass one octave below
+SinOsc droneSub =&gt; droneBus;
+
+0.04 =&gt; droneSin.gain;
+0.03 =&gt; droneFifth.gain;
+0.03 =&gt; droneSub.gain;
+
+// start in C
+// mtof converts midi note number to frequency
+Std.mtof( 48 ) =&gt; droneSin.freq;    // C3
+Std.mtof( 55 ) =&gt; droneFifth.freq;  // G3
+Std.mtof( 36 ) =&gt; droneSub.freq;    // C2
+
+
+
+// =====================================================================
+// analysis functions
+// =====================================================================
+
+0.0 =&gt; float frameRMS;
+
+// harmonic series intervals and relative strengths
+// used to cancel out harmonics so we find the fundamental
+[12, 19, 24, 28, 31, 34, 36] @=&gt; int harmonicSemitones[];
+[0.35, 0.25, 0.18, 0.14, 0.10, 0.08, 0.06] @=&gt; float harmonicStrength[];
+float bassChroma[12];
+float bassChromaAccum[12];
+
+// grabs the fft data and computes rms loudness
+fun void analyzeFrame()
+{
+    fft.upchuck();
+    fft.size() / 2 =&gt; int numBins;
+    0.0 =&gt; float sum;
+    for( 0 =&gt; int i; i &lt; numBins; i++ )
+    {
+        fft.cval(i) =&gt; complex c;
+        c.re * c.re + c.im * c.im +=&gt; sum;
+    }
+    Math.sqrt( sum / numBins ) =&gt; frameRMS;
+}
+
+// builds a chroma vector from the fft
+// also does harmonic cancellation
+// and tracks bass-weighted chroma separately to help find the root
+fun void computeChroma()
+{
+    for( 0 =&gt; int i; i &lt; 12; i++ ) { 0.0 =&gt; chroma[i]; 0.0 =&gt; bassChroma[i]; }
+    second / samp =&gt; float sr;
+    fft.size() =&gt; int fftSize;
+    fftSize / 2 =&gt; int numBins;
+
+    // only look at bins between 55hz and 2100hz
+    (55.0 * fftSize / sr) $ int =&gt; int lowBin;
+    (2100.0 * fftSize / sr) $ int =&gt; int highBin;
+    if( lowBin &lt; 1 ) 1 =&gt; lowBin;
+    if( highBin &gt;= numBins ) numBins - 1 =&gt; highBin;
+
+    0.0 =&gt; float totalEnergy;
+    0.0 =&gt; float bassTotal;
+    for( lowBin =&gt; int b; b &lt; highBin; b++ )
+    {
+        fft.cval(b) =&gt; complex c;
+        c.re * c.re + c.im * c.im =&gt; float mag2;
+        if( mag2 &lt; 0.0000001 ) continue;
+        Math.sqrt( mag2 ) =&gt; float mag;
+        b * sr / fftSize =&gt; float freq;
+        if( freq &lt; 30.0 ) continue;
+        Std.ftom( freq ) =&gt; float midi;
+
+        // weight higher notes less
+        1.0 =&gt; float weight;
+        if( midi &gt; 60.0 ) Math.pow( 0.85, (midi - 60.0) / 12.0 ) =&gt; weight;
+
+        // fold into pitch class 0-11
+        (Math.round( midi ) $ int) % 12 =&gt; int pc;
+        if( pc &lt; 0 ) pc + 12 =&gt; pc;
+        mag * weight +=&gt; chroma[pc];
+        mag * weight +=&gt; totalEnergy;
+
+        // extra weight for bass
+        if( midi &lt; 65.0 )
+        {
+            Math.pow( 2.0, (60.0 - midi) / 12.0 ) =&gt; float bassWeight;
+            mag * bassWeight +=&gt; bassChroma[pc];
+            mag * bassWeight +=&gt; bassTotal;
+        }
+    }
+
+    // normalize
+    if( totalEnergy &gt; 0.0 )
+        for( 0 =&gt; int i; i &lt; 12; i++ ) chroma[i] / totalEnergy =&gt; chroma[i];
+    if( bassTotal &gt; 0.0 )
+        for( 0 =&gt; int i; i &lt; 12; i++ ) bassChroma[i] / bassTotal =&gt; bassChroma[i];
+
+    float cleaned[12];
+    for( 0 =&gt; int i; i &lt; 12; i++ ) chroma[i] =&gt; cleaned[i];
+    for( 0 =&gt; int i; i &lt; 12; i++ )
+    {
+        if( chroma[i] &lt; 0.06 ) continue;
+        for( 0 =&gt; int h; h &lt; harmonicSemitones.size(); h++ )
+        {
+            (i + harmonicSemitones[h]) % 12 =&gt; int harmPC;
+            chroma[i] * harmonicStrength[h] -=&gt; cleaned[harmPC];
+        }
+    }
+    // clamp negatives
+    0.0 =&gt; float cleanTotal;
+    for( 0 =&gt; int i; i &lt; 12; i++ )
+    {
+        if( cleaned[i] &lt; 0.0 ) 0.0 =&gt; cleaned[i];
+        cleaned[i] +=&gt; cleanTotal;
+    }
+    if( cleanTotal &gt; 0.0 )
+        for( 0 =&gt; int i; i &lt; 12; i++ ) cleaned[i] / cleanTotal =&gt; chroma[i];
+    else
+        for( 0 =&gt; int i; i &lt; 12; i++ ) 0.0 =&gt; chroma[i];
+}
+
+// finds the root note by blending bass/full chroma
+fun int findRoot()
+{
+    0 =&gt; int best;
+    0.0 =&gt; float bestVal;
+    for( 0 =&gt; int i; i &lt; 12; i++ )
+    {
+        bassChromaAccum[i] * 0.6 + chromaAccum[i] * 0.4 =&gt; float combined;
+        if( combined &gt; bestVal )
+        {
+            combined =&gt; bestVal;
+            i =&gt; best;
+        }
+    }
+    return best;
+}
+
+// so the response can play in a complementary range
+fun void findPitchRange()
+{
+    second / samp =&gt; float sr;
+    fft.size() =&gt; int fftSize;
+    fftSize / 2 =&gt; int numBins;
+    127 =&gt; int lo;
+    0 =&gt; int hi;
+    (55.0 * fftSize / sr) $ int =&gt; int lowBin;
+    (2100.0 * fftSize / sr) $ int =&gt; int highBin;
+    if( lowBin &lt; 1 ) 1 =&gt; lowBin;
+    if( highBin &gt;= numBins ) numBins - 1 =&gt; highBin;
+    for( lowBin =&gt; int b; b &lt; highBin; b++ )
+    {
+        fft.cval(b) =&gt; complex c;
+        c.re * c.re + c.im * c.im =&gt; float mag2;
+        if( mag2 &lt; 0.001 ) continue;
+        b * sr / fftSize =&gt; float freq;
+        if( freq &lt; 30.0 ) continue;
+        Math.round( Std.ftom( freq ) ) $ int =&gt; int midi;
+        if( midi &lt; lo ) midi =&gt; lo;
+        if( midi &gt; hi ) midi =&gt; hi;
+    }
+    lo =&gt; inputLowNote;
+    hi =&gt; inputHighNote;
+}
+
+
+// =====================================================================
+// input analyzer
+// =====================================================================
+
+fun void inputAnalyzer()
+{
+    0 =&gt; int hasPlayed;
+    0.0 =&gt; float prevRMS;
+    now =&gt; time phraseStart;
+    0 =&gt; int dbgCount;
+
+    while( true )
+    {
+        // wait for next window
+        (fft.size() / 2)::samp =&gt; now;
+
+        // skip if mic is muted or not turn to listen
+        if( micMuted || convState != LISTENING )
+        {
+            10::ms =&gt; now;
+            continue;
+        }
+
+        // run analysis
+        analyzeFrame();
+        computeChroma();
+        frameRMS =&gt; float rms;
+        rms =&gt; inputRMS;
+        rms =&gt; vizRMS;
+
+        // copy to visuals
+        for( 0 =&gt; int i; i &lt; 12; i++ )
+            chroma[i] =&gt; vizChroma[i];
+
+        // print
+        dbgCount++;
+        if( dbgCount % 22 == 0 )
+            &lt;&lt;&lt; "RMS:", rms, "| thresh:", SILENCE_THRESH &gt;&gt;&gt;;
+
+
+        if( rms &gt; SILENCE_THRESH )
+        {
+            // first frame of sound reset accumulators
+            if( !hasPlayed )
+            {
+                1 =&gt; hasPlayed;
+                now =&gt; phraseStart;
+                0.0 =&gt; inputPeakRMS;
+                for( 0 =&gt; int i; i &lt; 12; i++ ) { 0.0 =&gt; chromaAccum[i]; 0.0 =&gt; bassChromaAccum[i]; }
+                0 =&gt; frameCount;
+            }
+            // accumulate chroma data across frames
+            for( 0 =&gt; int i; i &lt; 12; i++ )
+            {
+                chroma[i] +=&gt; chromaAccum[i];
+                bassChroma[i] +=&gt; bassChromaAccum[i];
+            }
+            frameCount++;
+            if( rms &gt; inputPeakRMS ) rms =&gt; inputPeakRMS;
+            findPitchRange();
+        }
+        else if( hasPlayed )
+        {
+            (now - phraseStart) / second =&gt; inputDuration;
+            0 =&gt; hasPlayed;
+        }
+    }
+}
+
+
+// =====================================================================
+// state machine
+// =====================================================================
+
+fun void stateMachine()
+{
+    while( true )
+    {
+        10::ms =&gt; now;
+
+        if( convState == ANALYZING )
+        {
+            &lt;&lt;&lt; "&gt;&gt; Analyzing..." &gt;&gt;&gt;;
+            // brief pause so the visuals can show the state
+            300::ms =&gt; now;
+
+            // start response
+            RESPONDING =&gt; convState;
+            RESPONDING =&gt; vizState;
+            0.0 =&gt; responseProgress;
+
+            // spork it
+            spork ~ generateResponse();
+        }
+    }
+}
+
+
+// =====================================================================
+// response generation
+// =====================================================================
+
+// lydian for major, dorian for minor
+fun int[] getStrongScale( int quality )
+{
+    if( quality == 1 ) return scaleDorian;
+    return scaleLydian;
+}
+
+// pad response - sustained w filter sweep
+fun void respondPad( int root, int quality, float gain )
+{
+    int notes[4];
+
+    // if played high, respond low and vice versa
+    48 =&gt; int baseOctave;
+    if( inputHighNote &gt; 72 ) 36 =&gt; baseOctave;
+    else if( inputLowNote &lt; 52 ) 60 =&gt; baseOctave;
+
+    // pick one of the voicings randomly
+    Math.random2(0, 2) * 4 =&gt; int vOff;
+    for( 0 =&gt; int i; i &lt; 4; i++ )
+    {
+        if( quality == 0 )
+            root + majVoicings[vOff + i] + baseOctave =&gt; notes[i];
+        else
+            root + minVoicings[vOff + i] + baseOctave =&gt; notes[i];
+    }
+
+    // set frequencies w slight random detuning
+    for( 0 =&gt; int i; i &lt; 4; i++ )
+    {
+        Math.random2f( -10.0, 10.0 ) =&gt; float centsA;
+        Math.random2f( -10.0, 10.0 ) =&gt; float centsB;
+        Std.mtof( notes[i] + centsA / 100.0 ) =&gt; padSawA[i].freq;
+        Std.mtof( notes[i] + centsB / 100.0 ) =&gt; padSawB[i].freq;
+        padEnv[i].keyOn();
+    }
+
+    // sweep filter back and forth
+    0.0 =&gt; float phase;
+    while( convState == RESPONDING )
+    {
+        0.02 :: second =&gt; now;
+        phase + 0.03 =&gt; phase;
+        Math.max( 300.0, 600.0 + 900.0 * Math.sin( phase ) ) =&gt; float cutoff;
+        for( 0 =&gt; int i; i &lt; 4; i++ )
+            cutoff =&gt; padLPF[i].freq;
+    }
+
+    // release when done
+    for( 0 =&gt; int i; i &lt; 4; i++ )
+        padEnv[i].keyOff();
+}
+
+// bell response - random sparkly notes from the scale
+
+fun void respondBells( int root, int scale[], float gain )
+{
+    while( convState == RESPONDING )
+    {
+        scale[ Math.random2(0, scale.size() - 1) ] =&gt; int interval;
+        root + interval + 72 + Math.random2(0,2) * 12 =&gt; int note;
+        Std.mtof( note ) =&gt; bellOsc.freq;
+        gain * 0.5 =&gt; bellOsc.gain;
+        bellEnv.keyOn();
+        150::ms =&gt; now;
+        bellEnv.keyOff();
+        // random wait between notes
+        Math.random2f( 0.8, 2.5 ) :: second =&gt; now;
+    }
+}
+
+// arp response - steps thru the scale sequentially
+fun void respondArp( int root, int scale[], float gain )
+{
+    0.35 =&gt; float baseInterval;
+    0 =&gt; int step;
+    while( convState == RESPONDING )
+    {
+        scale[ step % scale.size() ] =&gt; int interval;
+        root + interval + 60 =&gt; int note;
+        Std.mtof( note ) =&gt; arpOsc.freq;
+        gain * 0.5 =&gt; arpOsc.gain;
+        arpEnv.keyOn();
+        100::ms =&gt; now;
+        arpEnv.keyOff();
+        (baseInterval - 0.04) :: second =&gt; now;
+        step++;
+    }
+}
+
+// texture response filtered noise
+
+fun void respondTexture( int root, float gain )
+{
+    Std.mtof( root + 60 ) =&gt; float centerFreq;
+    centerFreq =&gt; texBPF.freq;
+    gain =&gt; texNoise.gain;
+    texEnv.keyOn();
+
+    // slowly sweep the bandpass filter w sine
+    centerFreq * 0.3 =&gt; float sweepDepth;
+    0.0 =&gt; float phase;
+    while( convState == RESPONDING )
+    {
+        0.03 :: second =&gt; now;
+        phase + 0.04 =&gt; phase;
+        centerFreq + sweepDepth * Math.sin( phase ) =&gt; texBPF.freq;
+    }
+
+    texEnv.keyOff();
+}
+
+// kills all sound immediately when space
+fun void killAllSound()
+{
+    for( 0 =&gt; int i; i &lt; 4; i++ )
+    {
+        padEnv[i].keyOff();
+        0.0 =&gt; padSawA[i].gain;
+        0.0 =&gt; padSawB[i].gain;
+    }
+    bellEnv.keyOff();
+    arpEnv.keyOff();
+    texEnv.keyOff();
+    0.0 =&gt; bellOsc.gain;
+    0.0 =&gt; arpOsc.gain;
+    0.0 =&gt; texNoise.gain;
+    0.0 =&gt; mixBus.gain;
+}
+
+// puts all the gains back to normal after a kill
+
+fun void restoreGains()
+{
+    for( 0 =&gt; int i; i &lt; 4; i++ )
+    {
+        0.15 =&gt; padSawA[i].gain;
+        0.15 =&gt; padSawB[i].gain;
+    }
+    0.5 =&gt; bellOsc.gain;
+    0.5 =&gt; arpOsc.gain;
+    0.4 =&gt; texNoise.gain;
+    0.6 =&gt; mixBus.gain;
+}
+
+// main response coordinator
+fun void generateResponse()
+{
+    restoreGains();
+    getStrongScale( detectedQuality ) @=&gt; int strongScale[];
+
+    // response volume scales w how loud played
+    Math.min( 0.5, Math.max( 0.25, inputPeakRMS * 2.0 ) ) =&gt; float respGain;
+
+    // set drone to root
+    Std.mtof( detectedRoot + 48 ) =&gt; droneSin.freq;
+    Std.mtof( detectedRoot + 55 ) =&gt; droneFifth.freq;
+    Std.mtof( detectedRoot + 36 ) =&gt; droneSub.freq;
+
+    // launch response voices as sporks
+    spork ~ respondPad( detectedRoot, detectedQuality, respGain );
+    spork ~ respondTexture( detectedRoot, respGain );
+    spork ~ respondBells( detectedRoot, strongScale, respGain );
+    spork ~ respondArp( detectedRoot, strongScale, respGain );
+
+    // wait for space
+    while( convState == RESPONDING )
+        20::ms =&gt; now;
+}
+
+
+// =====================================================================
+// drone modulation
+// =====================================================================
+
+fun void ambientDrone()
+{
+    0.0 =&gt; float phase;
+
+    while( true )
+    {
+        20::ms =&gt; now;
+        phase + 0.01 =&gt; phase;
+
+        // each drone voice wobbles between slightly different gains
+        0.05 + 0.02 * Math.sin( phase ) =&gt; droneSin.gain;
+        0.03 + 0.015 * Math.sin( phase * 0.7 ) =&gt; droneFifth.gain;
+        0.04 + 0.02 * Math.sin( phase * 1.3 ) =&gt; droneSub.gain;
+    }
+}
+
+
+// =====================================================================
+// chugl visuals
+// =====================================================================
+
+// scene and camera setup
+GG.scene() @=&gt; GScene @ scene;
+scene.backgroundColor( @(0.0, 0.0, 0.02) );  // almost black w hint of blue
+
+GG.camera() @=&gt; GCamera @ cam;
+cam.pos( @(0, 0, 16) );       // pulled back to see everything
+cam.lookAt( @(0, 0, 0) );     // looking at center
+
+// bloom
+GG.bloom( 1 );
+GG.bloomPass().threshold( 0.2 );
+GG.bloomPass().intensity( 1.5 );
+GG.bloomPass().radius( 0.8 );
+GG.bloomPass().levels( 6 );
+
+// tiny bit of ambient light
+scene.ambient( @(0.01, 0.005, 0.02) );
+
+// colors for each pitch class, rainbow
+[
+    @(0.3, 0.5, 1.0),   // C  = blue
+    @(0.2, 0.6, 0.9),   // C# = blue-cyan
+    @(0.0, 0.8, 0.9),   // D  = cyan
+    @(0.0, 0.9, 0.6),   // D# = cyan-green
+    @(0.2, 0.9, 0.3),   // E  = green
+    @(0.5, 1.0, 0.2),   // F  = lime
+    @(0.8, 0.9, 0.1),   // F# = yellow-lime
+    @(1.0, 0.8, 0.1),   // G  = gold
+    @(1.0, 0.5, 0.1),   // G# = orange
+    @(1.0, 0.2, 0.2),   // A  = red
+    @(0.8, 0.1, 0.6),   // A# = magenta
+    @(0.5, 0.2, 0.9)    // B  = violet
+] @=&gt; vec3 orbColors[];
+
+
+// 12 spheres in a circle, each one lights up when its note is detected
+GSphere pitchOrbs[12];
+GPointLight orbLights[12];
+float orbBaseScale[12];
+float orbCurrentScale[12];
+
+3.0 =&gt; float ORBIT_RADIUS;    // how far out the orbs are
+1.0 =&gt; float ORBIT_Y_OFFSET;  // shift the circle up a bit
+
+for( 0 =&gt; int i; i &lt; 12; i++ )
+{
+    pitchOrbs[i] --&gt; scene;
+
+    // small
+    0.12 =&gt; orbBaseScale[i];
+    0.12 =&gt; orbCurrentScale[i];
+    pitchOrbs[i].sca( 0.12 );
+
+    // dim when inactive
+    pitchOrbs[i].color( orbColors[i] * 0.15 );
+    pitchOrbs[i].emission( orbColors[i] * 0.6 );
+
+    // position in a circle
+    i * 2.0 * Math.PI / 12.0 =&gt; float angle;
+    ORBIT_RADIUS * Math.cos( angle ) =&gt; float px;
+    ORBIT_RADIUS * Math.sin( angle ) + ORBIT_Y_OFFSET =&gt; float py;
+    pitchOrbs[i].pos( @(px, py, 0) );
+
+    // point light at each orb
+    orbLights[i] --&gt; scene;
+    orbLights[i].color( orbColors[i] );
+    orbLights[i].pos( @(px, py, 0.8) );
+    orbLights[i].intensity( 0.0 );
+    orbLights[i].radius( 5.0 );
+}
+
+
+// thin donut around the orbs, color shows state
+stateRing.pos( @(0, ORBIT_Y_OFFSET, 0) );
+stateRing.sca( @(3.8, 3.8, 0.04) );
+stateRing.color( @(0.02, 0.04, 0.15) );
+stateRing.emission( @(0.1, 0.2, 0.7) );
+
+// ring colors per state
+@(0.1, 0.3, 1.0) =&gt; vec3 stateColorListening;
+@(0.8, 0.8, 0.9) =&gt; vec3 stateColorAnalyzing;
+@(1.0, 0.8, 0.2) =&gt; vec3 stateColorResponding;
+@(0.5, 0.1, 0.8) =&gt; vec3 stateColorCooldown;
+
+//particles
+150 =&gt; int NUM_PARTICLES;
+
+GPoints particles --&gt; scene;
+particles.billboard( 1 );  // always face camera
+
+vec3 particlePos[NUM_PARTICLES];
+vec3 particleVel[NUM_PARTICLES];
+vec3 particleColors[NUM_PARTICLES];
+float particleSizes[NUM_PARTICLES];
+float particleBaseSizes[NUM_PARTICLES];
+float particlePhase[NUM_PARTICLES];
+
+// randomize everything
+for( 0 =&gt; int i; i &lt; NUM_PARTICLES; i++ )
+{
+    @( Math.random2f(-6, 6), Math.random2f(-6, 6), Math.random2f(-3, 3) ) =&gt; particlePos[i];
+    @( Math.random2f(-0.08, 0.08), Math.random2f(-0.08, 0.08), Math.random2f(-0.03, 0.03) ) =&gt; particleVel[i];
+    @( Math.random2f(0.4, 0.7), Math.random2f(0.5, 0.8), Math.random2f(0.9, 1.0) ) =&gt; particleColors[i];
+    Math.random2f( 0.02, 0.08 ) =&gt; particleSizes[i];
+    particleSizes[i] =&gt; particleBaseSizes[i];
+    Math.random2f( 0, 6.28 ) =&gt; particlePhase[i];  // random phase so they dont all twinkle together
+}
+
+// send to gpu
+particles.positions( particlePos );
+particles.colors( particleColors );
+particles.sizes( particleSizes );
+particles.size( 1.0 );
+
+
+// status text and chord name display
+GText statusText --&gt; scene;
+statusText.text( "" );
+statusText.pos( @(0, -4.8, 0) );
+statusText.sca( 0.9 );
+statusText.color( @(0.4, 0.5, 0.9, 0.8) );
+
+GText chordText --&gt; scene;
+chordText.text( "" );
+chordText.pos( @(0, -5.5, 0) );
+chordText.sca( 0.8 );
+chordText.color( @(0.9, 0.8, 0.5, 0.9) );
+
+
+
+spork ~ inputAnalyzer();
+spork ~ stateMachine();
+spork ~ ambientDrone();
+
+&lt;&lt;&lt; "=== PIANO CONVERSATION ===" &gt;&gt;&gt;;
+&lt;&lt;&lt; "SPACE to switch turns | UP/DOWN threshold | M mute | R reset" &gt;&gt;&gt;;
+
+
+// =====================================================================
+// main render loop
+// =====================================================================
+
+0.0 =&gt; float camPhase;
+float smoothChroma[12];  // smoothed chroma
+
+while( true )
+{
+    // wait for next video frame
+    GG.nextFrame() =&gt; now;
+
+    // seconds since last frame, use this to make animations not depend on fps
+    GG.dt() =&gt; float dt;
+    now / second =&gt; float timeS;
+
+
+    // all key events come from the chugl window
+
+    // SPACE: toggle turns
+    if( GWindow.keyDown( GWindow.KEY_SPACE ) )
+    {
+        if( convState == LISTENING )
+        {
+
+            if( frameCount &gt; 0 )
+            {
+
+                0.0 =&gt; float totalAccum;
+                0.0 =&gt; float totalBassAccum2;
+                for( 0 =&gt; int i; i &lt; 12; i++ )
+                {
+                    chromaAccum[i] +=&gt; totalAccum;
+                    bassChromaAccum[i] +=&gt; totalBassAccum2;
+                }
+                if( totalAccum &gt; 0.0 )
+                    for( 0 =&gt; int i; i &lt; 12; i++ )
+                        chromaAccum[i] / totalAccum =&gt; chromaAccum[i];
+                if( totalBassAccum2 &gt; 0.0 )
+                    for( 0 =&gt; int i; i &lt; 12; i++ )
+                        bassChromaAccum[i] / totalBassAccum2 =&gt; bassChromaAccum[i];
+
+
+                findRoot() =&gt; detectedRoot;
+                Math.random2(0, 1) =&gt; detectedQuality;
+                &lt;&lt;&lt; pcNames[detectedRoot], qualNames[detectedQuality] &gt;&gt;&gt;;
+                ANALYZING =&gt; convState;
+                ANALYZING =&gt; vizState;
+            }
+        }
+        else if( convState == RESPONDING )
+        {
+
+            LISTENING =&gt; convState;
+            LISTENING =&gt; vizState;
+            killAllSound();
+            0 =&gt; frameCount;
+            0.0 =&gt; inputPeakRMS;
+        }
+    }
+
+    // UP: raise threshold
+    if( GWindow.keyDown( GWindow.KEY_UP ) )
+    {
+        SILENCE_THRESH * 1.5 =&gt; SILENCE_THRESH;
+        &lt;&lt;&lt; "Silence thresh:", SILENCE_THRESH &gt;&gt;&gt;;
+    }
+
+    // DOWN: lower threshold
+    if( GWindow.keyDown( GWindow.KEY_DOWN ) )
+    {
+        SILENCE_THRESH * 0.67 =&gt; SILENCE_THRESH;
+        &lt;&lt;&lt; "Silence thresh:", SILENCE_THRESH &gt;&gt;&gt;;
+    }
+
+    // M: mute/unmute mic
+    if( GWindow.keyDown( GWindow.KEY_M ) )
+    {
+        if( micMuted ) { 0 =&gt; micMuted; 5.0 =&gt; inputGain.gain; &lt;&lt;&lt; "MIC: ON" &gt;&gt;&gt;; }
+        else { 1 =&gt; micMuted; 0.0 =&gt; inputGain.gain; &lt;&lt;&lt; "MIC: MUTED" &gt;&gt;&gt;; }
+    }
+
+    // R: reset
+    if( GWindow.keyDown( GWindow.KEY_R ) )
+    {
+        LISTENING =&gt; convState;
+        LISTENING =&gt; vizState;
+        killAllSound();
+        0 =&gt; frameCount;
+        &lt;&lt;&lt; "&gt;&gt; RESET" &gt;&gt;&gt;;
+    }
+
+    // each orb glows based on how much of its pitch class is in the audio
+    for( 0 =&gt; int i; i &lt; 12; i++ )
+    {
+        // smooth interpolation so orbs fade
+        smoothChroma[i] + (vizChroma[i] - smoothChroma[i]) * Math.min(1.0, dt * 8.0) =&gt; smoothChroma[i];
+
+        // scale orb size based on chroma
+        orbBaseScale[i] + smoothChroma[i] * 0.6 =&gt; float targetScale;
+        orbCurrentScale[i] + (targetScale - orbCurrentScale[i]) * Math.min(1.0, dt * 6.0) =&gt; orbCurrentScale[i];
+        pitchOrbs[i].sca( orbCurrentScale[i] );
+
+        // brighter emission when active
+        pitchOrbs[i].emission( orbColors[i] * (0.6 + smoothChroma[i] * 4.0) );
+
+        // light intensity scales w chroma
+        orbLights[i].intensity( smoothChroma[i] * 5.0 );
+
+        // slow rotation
+        dt * 0.3 =&gt; pitchOrbs[i].rotateY;
+
+        // gentle bobbing
+        i * 2.0 * Math.PI / 12.0 =&gt; float angle;
+        ORBIT_RADIUS * Math.cos( angle ) =&gt; float bx;
+        ORBIT_RADIUS * Math.sin( angle ) + ORBIT_Y_OFFSET + 0.1 * Math.sin( timeS * 0.5 + i * 0.5 ) =&gt; float by;
+        pitchOrbs[i].pos( @(bx, by, 0) );
+        orbLights[i].pos( @(bx, by, 0.8) );
+    }
+
+
+    // transitions color based on current state
+    stateColorListening =&gt; vec3 ringTarget;
+    if( vizState == ANALYZING ) stateColorAnalyzing =&gt; ringTarget;
+    else if( vizState == RESPONDING ) stateColorResponding =&gt; ringTarget;
+    else if( vizState == COOLDOWN ) stateColorCooldown =&gt; ringTarget;
+
+    // toward target color
+    stateRing.color() =&gt; vec3 curRingColor;
+    curRingColor + (ringTarget - curRingColor) * Math.min(1.0, dt * 3.0) =&gt; vec3 newRingColor;
+    stateRing.color( newRingColor );
+    stateRing.emission( newRingColor * 0.3 );
+
+    // ring pulses gently
+    1.0 + 0.03 * Math.sin( timeS * 2.0 ) =&gt; float ringPulse;
+    if( vizState == RESPONDING )
+        1.0 + 0.06 * Math.sin( timeS * 4.0 ) =&gt; ringPulse;
+    stateRing.pos( @(0, ORBIT_Y_OFFSET, 0) );
+    stateRing.sca( @(3.8 * ringPulse, 3.8 * ringPulse, 0.04) );
+
+    // slow rotation
+    dt * 0.15 =&gt; stateRing.rotateZ;
+
+    // update particles
+    for( 0 =&gt; int i; i &lt; NUM_PARTICLES; i++ )
+    {
+        // move by velocity
+        particlePos[i] + particleVel[i] * dt =&gt; particlePos[i];
+
+        // wrap around edges
+        particlePos[i].x =&gt; float px;
+        particlePos[i].y =&gt; float py;
+        particlePos[i].z =&gt; float pz;
+        if( px &gt; 6 ) -6.0 =&gt; px;
+        if( px &lt; -6 ) 6.0 =&gt; px;
+        if( py &gt; 6 ) -6.0 =&gt; py;
+        if( py &lt; -6 ) 6.0 =&gt; py;
+        @(px, py, pz) =&gt; particlePos[i];
+
+        // twinkle w sine
+        particlePhase[i] + dt * Math.random2f(1.5, 3.0) =&gt; particlePhase[i];
+        particleBaseSizes[i] * (0.7 + 0.3 * Math.sin( particlePhase[i] )) =&gt; float twinkleSize;
+
+        // get bigger when louder
+        twinkleSize * (1.0 + vizRMS * 5.0) =&gt; particleSizes[i];
+
+        // color shift
+        if( vizState == RESPONDING )
+        {
+            // go to root color
+            particleColors[i] + (orbColors[detectedRoot] - particleColors[i]) * dt * 0.5 =&gt; particleColors[i];
+        }
+        else
+        {
+            // otherwise go back to default
+            @( Math.random2f(0.5, 1.0), Math.random2f(0.6, 1.0), Math.random2f(0.8, 1.0) ) =&gt; vec3 defaultColor;
+            particleColors[i] + (defaultColor - particleColors[i]) * dt * 0.2 =&gt; particleColors[i];
+        }
+    }
+
+    // upload updated particle data to gpu
+    particles.positions( particlePos );
+    particles.colors( particleColors );
+    particles.sizes( particleSizes );
+
+
+    // only show the chord name during response, nothing otherwise
+    statusText.text( "" );
+
+    if( convState == RESPONDING )
+        chordText.text( pcNames[detectedRoot] + " " + qualNames[detectedQuality] );
+    else
+        chordText.text( "" );
+
+    // --- camera sway ---
+    camPhase + dt * 0.2 =&gt; camPhase;
+    cam.posX( 0.4 * Math.sin( camPhase ) );
+    cam.posY( 0.3 * Math.sin( camPhase * 0.7 ) );
+}</code></pre>
+        </details>
     </div>
 </body>
 </html>
